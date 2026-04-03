@@ -2,113 +2,93 @@ package com.glassvpn.app
 
 import android.content.Context
 import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import java.io.File
 
 /**
- * Manages a bundled tun2socks process that bridges the Android TUN fd to Xray's SOCKS5 proxy.
- * Uses xjasonlyu/tun2socks v2.6.0 static Linux ARM binaries bundled as assets.
+ * Bridges the Android VPN TUN fd to Xray's SOCKS5 proxy via tun2socks subprocess.
  *
- * Invocation: tun2socks -device fd://N -proxy socks5://127.0.0.1:10808 -loglevel error
+ * Critical: Android sets FD_CLOEXEC on VPN file descriptors, which closes them during
+ * fork+exec. We call Os.fcntl(F_SETFD, 0) to clear CLOEXEC before spawning, so the
+ * fd remains valid inside the tun2socks process.
  */
 object Tun2SocksManager {
 
     private const val TAG = "Tun2SocksManager"
-    private const val BINARY_NAME = "tun2socks"
 
     @Volatile
     private var process: Process? = null
 
-    /** Extracts the binary for the current ABI and returns its path, or null on failure. */
     private fun extractBinary(context: Context): File? {
-        val abi = selectAbi()
-        val assetPath = "tun2socks/$abi"
-        val destFile = File(context.filesDir, BINARY_NAME)
-
+        val abi = when {
+            Build.SUPPORTED_ABIS.contains("arm64-v8a") -> "arm64-v8a"
+            Build.SUPPORTED_ABIS.contains("armeabi-v7a") -> "armeabi-v7a"
+            else -> "arm64-v8a"
+        }
+        val dest = File(context.filesDir, "tun2socks")
         return try {
-            context.assets.open(assetPath).use { input ->
-                destFile.outputStream().use { output -> input.copyTo(output) }
-            }
-            destFile.setExecutable(true, false)
-            Log.i(TAG, "Extracted $assetPath → ${destFile.absolutePath}")
-            destFile
+            context.assets.open("tun2socks/$abi").use { it.copyTo(dest.outputStream()) }
+            dest.setExecutable(true, false)
+            dest
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to extract tun2socks binary for $abi", e)
+            Log.e(TAG, "Binary extract failed ($abi)", e)
             null
         }
     }
 
-    private fun selectAbi(): String {
-        val supportedAbis = Build.SUPPORTED_ABIS
-        return when {
-            supportedAbis.contains("arm64-v8a") -> "arm64-v8a"
-            supportedAbis.contains("armeabi-v7a") -> "armeabi-v7a"
-            else -> "arm64-v8a" // fallback
-        }
-    }
-
-    /**
-     * Starts tun2socks bridging [tunFd] to Xray's SOCKS5 on port [socksPort].
-     * Returns true if the process started successfully.
-     */
-    fun start(context: Context, tunFd: Int, socksPort: Int = XrayManager.SOCKS_PORT): Boolean {
-        stop() // ensure clean state
-
+    fun start(context: Context, tunPfd: ParcelFileDescriptor, socksPort: Int = XrayManager.SOCKS_PORT): Boolean {
+        stop()
         val binary = extractBinary(context) ?: return false
 
-        return try {
-            val cmd = arrayOf(
-                binary.absolutePath,
-                "-device", "fd://$tunFd",
-                "-proxy", "socks5://127.0.0.1:$socksPort",
-                "-loglevel", "error"
-            )
-            Log.i(TAG, "Starting: ${cmd.joinToString(" ")}")
+        // Clear FD_CLOEXEC so the fd number survives fork+exec into tun2socks.
+        // Without this, Android's O_CLOEXEC default causes the fd to be invalid in the child.
+        try {
+            Os.fcntl(tunPfd.fileDescriptor, OsConstants.F_SETFD, 0)
+            Log.i(TAG, "Cleared FD_CLOEXEC on TUN fd ${tunPfd.fd}")
+        } catch (e: Exception) {
+            Log.e(TAG, "fcntl F_SETFD failed — fd will likely be invalid in subprocess", e)
+            return false
+        }
 
-            val pb = ProcessBuilder(*cmd)
-                .redirectErrorStream(true)
-                .start()
+        val fdInt = tunPfd.fd
+
+        return try {
+            val pb = ProcessBuilder(
+                binary.absolutePath,
+                "-device", "fd://$fdInt",
+                "-proxy", "socks5://127.0.0.1:$socksPort",
+                "-loglevel", "warning"
+            ).redirectErrorStream(true).start()
 
             process = pb
 
-            // Read stdout/stderr in background for logging
+            // Drain output in background for debugging
             Thread {
-                try {
-                    pb.inputStream.bufferedReader().forEachLine { line ->
-                        Log.d(TAG, line)
-                    }
-                } catch (_: Exception) {}
-            }.apply {
-                isDaemon = true
-                start()
-            }
+                try { pb.inputStream.bufferedReader().forEachLine { Log.d(TAG, it) } }
+                catch (_: Exception) {}
+            }.apply { isDaemon = true; start() }
 
-            // Short wait then check it's still alive
-            Thread.sleep(300)
-            val alive = pb.isAlive
-            if (!alive) {
-                Log.e(TAG, "tun2socks exited immediately (exit=${pb.exitValue()})")
-            } else {
-                Log.i(TAG, "tun2socks running (pid via process handle)")
+            // Give it 400ms to start or crash
+            Thread.sleep(400)
+            if (!pb.isAlive) {
+                Log.e(TAG, "tun2socks died instantly (exit ${pb.exitValue()})")
+                return false
             }
-            alive
+            Log.i(TAG, "tun2socks running on fd://$fdInt → socks5://127.0.0.1:$socksPort")
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "tun2socks start failed", e)
+            Log.e(TAG, "tun2socks launch failed", e)
             false
         }
     }
 
     fun stop() {
-        process?.let { p ->
-            try {
-                p.destroy()
-                Log.i(TAG, "tun2socks stopped")
-            } catch (e: Exception) {
-                Log.e(TAG, "tun2socks stop error", e)
-            }
-        }
+        process?.destroyForcibly()
         process = null
     }
 
-    fun isRunning(): Boolean = process?.isAlive == true
+    fun isRunning() = process?.isAlive == true
 }

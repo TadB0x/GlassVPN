@@ -93,11 +93,11 @@ class GlassVpnService : VpnService() {
                 return
             }
             tunInterface = tun
-            val tunFd = tun.fd
-            Log.i(TAG, "TUN established fd=$tunFd")
+            Log.i(TAG, "TUN established fd=${tun.fd}")
 
             // 3. Start tun2socks: TUN fd → Xray SOCKS5 127.0.0.1:10808
-            val t2sOk = Tun2SocksManager.start(this, tunFd)
+            // Pass the ParcelFileDescriptor so we can clear FD_CLOEXEC before exec
+            val t2sOk = Tun2SocksManager.start(this, tun)
             if (!t2sOk) {
                 Log.e(TAG, "tun2socks failed to start")
                 cleanupTun()
