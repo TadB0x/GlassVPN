@@ -126,7 +126,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun startStatsPolling() {
         val app = getApplication<Application>()
-        val sm = StatsManager(app.applicationInfo.uid)
+        val sm = StatsManager()
         statsManager = sm
         sm.start(viewModelScope)
 
