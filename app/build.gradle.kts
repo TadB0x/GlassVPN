@@ -54,6 +54,12 @@ android {
         buildConfig = true
     }
 
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("libs")
+        }
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -65,6 +71,8 @@ android {
 }
 
 dependencies {
+    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))
+
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -80,14 +88,8 @@ dependencies {
     implementation(libs.google.fonts)
 
     implementation(libs.haze)
-    // Vico chart library (kept as optional - replaced by custom Canvas graph for stability)
-    // implementation(libs.vico.compose.m3)
-    // implementation(libs.vico.core)
 
     implementation(libs.kotlinx.coroutines.android)
-
-    implementation(libs.xray.lite)
-    implementation(libs.tun2socks)
 
     debugImplementation(libs.androidx.ui.tooling)
 }
