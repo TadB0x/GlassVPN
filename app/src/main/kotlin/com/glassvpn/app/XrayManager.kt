@@ -82,7 +82,7 @@ object XrayManager {
                             put("port", 443)
                             put("users", JSONArray().apply {
                                 put(JSONObject().apply {
-                                    put("id", "080abcaa-d514-4637-af0d-15be3ad1f539")
+                                    put("id", "5d384b19-3034-4f73-87f1-39ef60742f2c")
                                     put("flow", "xtls-rprx-vision")
                                     put("encryption", "none")
                                     put("level", 8)
@@ -97,8 +97,8 @@ object XrayManager {
                     put("realitySettings", JSONObject().apply {
                         put("serverName", "www.google.com")
                         put("fingerprint", "chrome")
-                        put("publicKey", "wifAhkRevxiq97-dATR3rI-3T0WsSP_egwTtuIw5E3U")
-                        put("shortId", "b7b398f6d5208bd1")
+                        put("publicKey", "y9eoQbKQqLkIKZhDSxiItiqQrvLZQUAJPMnXRRWHTw4")
+                        put("shortId", "a9f5385cbe515381")
                     })
                 })
             })
