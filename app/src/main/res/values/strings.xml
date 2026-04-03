@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">GlassVPN</string>
+    <string name="notification_channel_id">glassvpn_service</string>
+    <string name="notification_channel_name">VPN Service</string>
+    <string name="notification_title">GlassVPN Active</string>
+    <string name="vpn_connected">Connected</string>
+    <string name="vpn_disconnected">Disconnected</string>
+    <string name="vpn_connecting">Connecting…</string>
+</resources>
