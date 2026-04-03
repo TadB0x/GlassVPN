@@ -24,6 +24,7 @@ androidx-material-icons-extended = { group = "androidx.compose.material", name =
 haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = "haze" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 google-fonts = { group = "androidx.compose.ui", name = "ui-text-google-fonts" }
+appcompat = { group = "androidx.appcompat", name = "appcompat", version = "1.7.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
