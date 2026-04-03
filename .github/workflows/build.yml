@@ -23,6 +23,33 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+          add-to-path: true
+
+      - name: Build libhev_socks5_tunnel.so
+        env:
+          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          git clone --recurse-submodules https://github.com/heiher/hev-socks5-tunnel hev-src
+          mkdir -p tmpndk/jni
+          echo 'include $(call all-subdir-makefiles)' > tmpndk/jni/Android.mk
+          ln -s $(pwd)/hev-src tmpndk/jni/hev-socks5-tunnel
+          $ANDROID_NDK/ndk-build \
+            NDK_PROJECT_PATH=tmpndk \
+            APP_BUILD_SCRIPT=tmpndk/jni/Android.mk \
+            "APP_ABI=arm64-v8a armeabi-v7a x86_64" \
+            APP_PLATFORM=android-26 \
+            NDK_LIBS_OUT=$(pwd)/app/src/main/jniLibs \
+            NDK_OUT=$(pwd)/tmpndk/obj \
+            "APP_CFLAGS=-O3 -DPKGNAME=com/glassvpn/app -DCLSNAME=TProxyService" \
+            "APP_LDFLAGS=-Wl,--build-id=none -Wl,--hash-style=gnu"
+          echo "Built .so files:"
+          find app/src/main/jniLibs -name "*.so" | sort
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -37,10 +64,10 @@ jobs:
             ${{ runner.os }}-gradle-
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleDebug --no-daemon
 
-      - name: Build release APK (signed with debug keystore)
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+      - name: Build release APK
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -55,16 +82,3 @@ jobs:
           name: GlassVPN-release
           path: app/build/outputs/apk/release/app-release.apk
           retention-days: 14
-
-      - name: Build summary
-        run: |
-          echo "## Build Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
-            SIZE=$(du -sh app/build/outputs/apk/debug/app-debug.apk | cut -f1)
-            echo "✅ Debug APK: $SIZE" >> $GITHUB_STEP_SUMMARY
-          fi
-          if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
-            SIZE=$(du -sh app/build/outputs/apk/release/app-release.apk | cut -f1)
-            echo "✅ Release APK: $SIZE" >> $GITHUB_STEP_SUMMARY
-          fi

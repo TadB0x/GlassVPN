@@ -17,17 +17,15 @@ class GlassVpnService : VpnService() {
 
     companion object {
         private const val TAG = "GlassVpnService"
-
         const val ACTION_START = "com.glassvpn.app.START"
-        const val ACTION_STOP = "com.glassvpn.app.STOP"
+        const val ACTION_STOP  = "com.glassvpn.app.STOP"
         const val ACTION_STATE_CHANGED = "com.glassvpn.app.STATE_CHANGED"
         const val EXTRA_STATE = "state"
-        const val STATE_CONNECTED = "connected"
+        const val STATE_CONNECTED    = "connected"
         const val STATE_DISCONNECTED = "disconnected"
-        const val STATE_ERROR = "error"
+        const val STATE_ERROR        = "error"
 
-        @Volatile
-        var isRunning = false
+        @Volatile var isRunning = false
             private set
     }
 
@@ -43,15 +41,10 @@ class GlassVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return when (intent?.action) {
-            ACTION_STOP -> {
-                stopVpn()
-                START_NOT_STICKY
-            }
+            ACTION_STOP -> { stopVpn(); START_NOT_STICKY }
             ACTION_START -> {
-                startForeground(
-                    VpnNotification.NOTIFICATION_ID,
-                    VpnNotification.build(this, false, -1, 0, 0)
-                )
+                startForeground(VpnNotification.NOTIFICATION_ID,
+                    VpnNotification.build(this, false, -1, 0, 0))
                 serviceScope.launch { startVpn() }
                 START_STICKY
             }
@@ -63,16 +56,11 @@ class GlassVpnService : VpnService() {
         try {
             Log.i(TAG, "Starting VPN...")
 
-            // 1. Start Xray core (SOCKS5 inbound on 127.0.0.1:10808)
-            val xrayOk = XrayManager.start(this)
-            if (!xrayOk) {
-                Log.e(TAG, "Xray failed to start")
-                broadcastState(STATE_ERROR)
-                return
+            // 1. Start Xray (SOCKS5 inbound on 127.0.0.1:10808)
+            if (!XrayManager.start(this)) {
+                Log.e(TAG, "Xray failed to start"); broadcastState(STATE_ERROR); return
             }
-
-            // Wait for Xray to bind its port
-            delay(600L)
+            delay(600)
 
             // 2. Establish TUN interface
             val tun = Builder()
@@ -82,54 +70,40 @@ class GlassVpnService : VpnService() {
                 .addDnsServer("8.8.4.4")
                 .addRoute("0.0.0.0", 0)
                 .setMtu(1500)
-                // Exclude our own app so Xray's outbound bypasses the tunnel
-                .addDisallowedApplication(packageName)
+                .addDisallowedApplication(packageName) // exclude self → Xray bypasses tunnel
                 .establish()
 
             if (tun == null) {
-                Log.e(TAG, "TUN establish returned null — permission denied?")
-                XrayManager.stop()
-                broadcastState(STATE_ERROR)
-                return
+                Log.e(TAG, "TUN establish failed"); XrayManager.stop(); broadcastState(STATE_ERROR); return
             }
             tunInterface = tun
             Log.i(TAG, "TUN established fd=${tun.fd}")
 
-            // 3. Start tun2socks: TUN fd → Xray SOCKS5 127.0.0.1:10808
-            // Pass the ParcelFileDescriptor so we can clear FD_CLOEXEC before exec
-            val t2sOk = Tun2SocksManager.start(this, tun)
-            if (!t2sOk) {
-                Log.e(TAG, "tun2socks failed to start")
-                cleanupTun()
-                XrayManager.stop()
-                broadcastState(STATE_ERROR)
-                return
-            }
+            // 3. Start hev-socks5-tunnel in-process (same fd, no CLOEXEC issue)
+            TProxyService.start(this, tun)
 
-            // 4. Stats
-            val sm = StatsManager(applicationInfo.uid)
+            // 4. Stats (uses hev native stats for accuracy)
+            val sm = StatsManager()
             statsManager = sm
             sm.start(serviceScope)
 
             isRunning = true
             broadcastState(STATE_CONNECTED)
 
-            // 5. Notification loop
+            // 5. Notification update loop
             notificationJob = serviceScope.launch {
                 while (isActive) {
                     val s = sm.stats.value
-                    VpnNotification.update(
-                        this@GlassVpnService, true,
-                        s.pingMs, s.downloadSpeedBps, s.uploadSpeedBps
-                    )
-                    delay(1000L)
+                    VpnNotification.update(this@GlassVpnService, true,
+                        s.pingMs, s.downloadSpeedBps, s.uploadSpeedBps)
+                    delay(1000)
                 }
             }
 
-            Log.i(TAG, "VPN fully up")
+            Log.i(TAG, "VPN connected")
 
         } catch (e: Exception) {
-            Log.e(TAG, "startVpn exception", e)
+            Log.e(TAG, "startVpn failed", e)
             broadcastState(STATE_ERROR)
             stopVpn()
         }
@@ -138,12 +112,11 @@ class GlassVpnService : VpnService() {
     private fun stopVpn() {
         Log.i(TAG, "Stopping VPN...")
         isRunning = false
-        notificationJob?.cancel()
-        notificationJob = null
-        statsManager?.stop()
-        statsManager = null
-        Tun2SocksManager.stop()
-        cleanupTun()
+        notificationJob?.cancel(); notificationJob = null
+        statsManager?.stop(); statsManager = null
+        TProxyService.stop()
+        try { tunInterface?.close() } catch (_: Exception) {}
+        tunInterface = null
         serviceScope.launch { XrayManager.stop() }
         broadcastState(STATE_DISCONNECTED)
         VpnNotification.update(this, false, -1, 0, 0)
@@ -151,26 +124,12 @@ class GlassVpnService : VpnService() {
         stopSelf()
     }
 
-    private fun cleanupTun() {
-        try { tunInterface?.close() } catch (e: Exception) { Log.e(TAG, "TUN close", e) }
-        tunInterface = null
-    }
-
     private fun broadcastState(state: String) {
         sendBroadcast(Intent(ACTION_STATE_CHANGED).apply {
-            putExtra(EXTRA_STATE, state)
-            setPackage(packageName)
+            putExtra(EXTRA_STATE, state); setPackage(packageName)
         })
     }
 
-    override fun onDestroy() {
-        serviceScope.cancel()
-        stopVpn()
-        super.onDestroy()
-    }
-
-    override fun onRevoke() {
-        stopVpn()
-        super.onRevoke()
-    }
+    override fun onDestroy() { serviceScope.cancel(); stopVpn(); super.onDestroy() }
+    override fun onRevoke() { stopVpn(); super.onRevoke() }
 }
