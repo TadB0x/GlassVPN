@@ -46,7 +46,7 @@ object Tun2SocksManager {
         // on Android 8+). The duplicated fd therefore survives fork+exec into the tun2socks
         // subprocess, making fd://N valid when tun2socks opens it.
         val dup = try {
-            ParcelFileDescriptor.dup(tunPfd)
+            ParcelFileDescriptor.dup(tunPfd.fileDescriptor)
         } catch (e: Exception) {
             Log.e(TAG, "dup() failed", e)
             return false
