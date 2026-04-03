@@ -14,18 +14,18 @@ import java.io.File
 object XrayManager {
 
     private const val TAG = "XrayManager"
+    const val SOCKS_PORT = 10808
 
     @Volatile
     private var controller: CoreController? = null
 
-    fun buildConfig(): String {
+    private fun buildConfig(): String {
         val config = JSONObject()
 
         config.put("log", JSONObject().apply {
             put("loglevel", "warning")
         })
 
-        // Stats API — needed for queryStats()
         config.put("stats", JSONObject())
         config.put("policy", JSONObject().apply {
             put("levels", JSONObject().apply {
@@ -33,8 +33,6 @@ object XrayManager {
                     put("connIdle", 300)
                     put("uplinkOnly", 1)
                     put("downlinkOnly", 1)
-                    put("statsUserUplink", true)
-                    put("statsUserDownlink", true)
                 })
             })
             put("system", JSONObject().apply {
@@ -43,19 +41,36 @@ object XrayManager {
             })
         })
 
-        // DNS
         config.put("dns", JSONObject().apply {
-            put("hosts", JSONObject().apply {
-                put("domain:googleapis.cn", "googleapis.com")
-            })
             put("servers", JSONArray().apply {
                 put("8.8.8.8")
                 put("8.8.4.4")
-                put("localhost")
             })
         })
 
-        // Outbounds
+        // SOCKS5 inbound — tun2socks will forward TUN traffic here
+        config.put("inbounds", JSONArray().apply {
+            put(JSONObject().apply {
+                put("tag", "socks")
+                put("port", SOCKS_PORT)
+                put("listen", "127.0.0.1")
+                put("protocol", "socks")
+                put("settings", JSONObject().apply {
+                    put("auth", "noauth")
+                    put("udp", true)
+                    put("userLevel", 8)
+                })
+                put("sniffing", JSONObject().apply {
+                    put("enabled", true)
+                    put("destOverride", JSONArray().apply {
+                        put("http")
+                        put("tls")
+                    })
+                })
+            })
+        })
+
+        // VLESS+REALITY outbound
         config.put("outbounds", JSONArray().apply {
             put(JSONObject().apply {
                 put("tag", "proxy")
@@ -86,9 +101,6 @@ object XrayManager {
                         put("shortId", "b7b398f6d5208bd1")
                     })
                 })
-                put("mux", JSONObject().apply {
-                    put("enabled", false)
-                })
             })
             put(JSONObject().apply {
                 put("tag", "direct")
@@ -104,17 +116,9 @@ object XrayManager {
             })
         })
 
-        // Routing
         config.put("routing", JSONObject().apply {
             put("domainStrategy", "IPIfNonMatch")
             put("rules", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("type", "field")
-                    put("outboundTag", "block")
-                    put("domain", JSONArray().apply {
-                        put("geosite:category-ads-all")
-                    })
-                })
                 put(JSONObject().apply {
                     put("type", "field")
                     put("outboundTag", "proxy")
@@ -126,48 +130,47 @@ object XrayManager {
         return config.toString(2)
     }
 
-    suspend fun start(context: Context, tunFd: Int): Boolean = withContext(Dispatchers.IO) {
+    suspend fun start(context: Context): Boolean = withContext(Dispatchers.IO) {
         if (controller?.isRunning == true) {
             Log.w(TAG, "Xray already running")
             return@withContext true
         }
         try {
-            val configJson = buildConfig()
-            val configFile = File(context.filesDir, "xray_config.json")
-            configFile.writeText(configJson)
-
             val assetDir = File(context.filesDir, "xray_assets")
             assetDir.mkdirs()
 
-            // Copy geodata from AAR assets if present
+            // Copy geodata from AAR embedded assets
             listOf("geoip.dat", "geosite.dat", "geoip-only-cn-private.dat").forEach { name ->
                 val dest = File(assetDir, name)
                 if (!dest.exists()) {
-                    try {
-                        context.assets.open(name).use { it.copyTo(dest.outputStream()) }
-                    } catch (_: Exception) {}
+                    try { context.assets.open(name).use { it.copyTo(dest.outputStream()) } }
+                    catch (_: Exception) {}
                 }
             }
 
-            Libv2ray.initCoreEnv(assetDir.absolutePath, context.filesDir.absolutePath)
+            // initCoreEnv(assetPath, xudpBaseKey)
+            Libv2ray.initCoreEnv(assetDir.absolutePath, "")
 
             val handler = object : CoreCallbackHandler {
                 override fun onEmitStatus(p0: Long, p1: String?): Long {
-                    Log.d(TAG, "Xray status [$p0]: $p1")
+                    Log.d(TAG, "Xray [$p0]: $p1")
                     return 0L
                 }
                 override fun shutdown(): Long = 0L
                 override fun startup(): Long = 0L
             }
 
+            val configJson = buildConfig()
             val ctrl = Libv2ray.newCoreController(handler)
-            ctrl.startLoop(configFile.absolutePath, tunFd)
+            // startLoop(configContent: String, tunFd: Int)
+            // tunFd=0 means no TUN mode — we use SOCKS inbound + tun2socks bridge
+            ctrl.startLoop(configJson, 0)
             controller = ctrl
 
-            Log.i(TAG, "Xray started with TUN fd=$tunFd")
+            Log.i(TAG, "Xray started on SOCKS5 port $SOCKS_PORT")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Xray start exception", e)
+            Log.e(TAG, "Xray start failed", e)
             false
         }
     }
@@ -177,7 +180,7 @@ object XrayManager {
             controller?.stopLoop()
             Log.i(TAG, "Xray stopped")
         } catch (e: Exception) {
-            Log.e(TAG, "Xray stop exception", e)
+            Log.e(TAG, "Xray stop error", e)
         } finally {
             controller = null
         }
@@ -185,7 +188,6 @@ object XrayManager {
 
     fun isRunning(): Boolean = controller?.isRunning == true
 
-    /** Returns total outbound bytes (proxy tag) for download/upload tracking. */
     fun queryDownloadBytes(): Long = try {
         controller?.queryStats("proxy", "downlink") ?: 0L
     } catch (_: Exception) { 0L }
@@ -193,20 +195,4 @@ object XrayManager {
     fun queryUploadBytes(): Long = try {
         controller?.queryStats("proxy", "uplink") ?: 0L
     } catch (_: Exception) { 0L }
-
-    /** Measures server latency using Xray's built-in delay measurement. */
-    suspend fun measurePing(): Long = withContext(Dispatchers.IO) {
-        try {
-            val testConfig = JSONObject().apply {
-                put("v", "2")
-                put("ps", "ping-test")
-                put("add", "83.228.227.239")
-                put("port", "443")
-                put("id", "080abcaa-d514-4637-af0d-15be3ad1f539")
-                put("type", "none")
-                put("host", "www.google.com")
-            }
-            controller?.measureDelay(testConfig.toString()) ?: -1L
-        } catch (_: Exception) { -1L }
-    }
 }

@@ -61,36 +61,52 @@ class GlassVpnService : VpnService() {
 
     private suspend fun startVpn() {
         try {
-            Log.i(TAG, "Starting VPN tunnel...")
+            Log.i(TAG, "Starting VPN...")
 
-            val builder = Builder()
+            // 1. Start Xray core (SOCKS5 inbound on 127.0.0.1:10808)
+            val xrayOk = XrayManager.start(this)
+            if (!xrayOk) {
+                Log.e(TAG, "Xray failed to start")
+                broadcastState(STATE_ERROR)
+                return
+            }
+
+            // Wait for Xray to bind its port
+            delay(600L)
+
+            // 2. Establish TUN interface
+            val tun = Builder()
                 .setSession("GlassVPN")
-                .addAddress("10.0.0.1", 24)
+                .addAddress("10.0.0.2", 24)
                 .addDnsServer("8.8.8.8")
                 .addDnsServer("8.8.4.4")
                 .addRoute("0.0.0.0", 0)
                 .setMtu(1500)
+                // Exclude our own app so Xray's outbound bypasses the tunnel
                 .addDisallowedApplication(packageName)
+                .establish()
 
-            tunInterface = builder.establish()
-            if (tunInterface == null) {
-                Log.e(TAG, "TUN establish returned null")
+            if (tun == null) {
+                Log.e(TAG, "TUN establish returned null — permission denied?")
+                XrayManager.stop()
                 broadcastState(STATE_ERROR)
                 return
             }
+            tunInterface = tun
+            val tunFd = tun.fd
+            Log.i(TAG, "TUN established fd=$tunFd")
 
-            val tunFd = tunInterface!!.fd
-            Log.i(TAG, "TUN established, fd=$tunFd")
-
-            // Pass TUN fd directly to xray-core — no tun2socks bridge needed
-            val xrayStarted = XrayManager.start(this, tunFd)
-            if (!xrayStarted) {
-                Log.e(TAG, "Xray failed to start")
+            // 3. Start tun2socks: TUN fd → Xray SOCKS5 127.0.0.1:10808
+            val t2sOk = Tun2SocksManager.start(this, tunFd)
+            if (!t2sOk) {
+                Log.e(TAG, "tun2socks failed to start")
                 cleanupTun()
+                XrayManager.stop()
                 broadcastState(STATE_ERROR)
                 return
             }
 
+            // 4. Stats
             val sm = StatsManager(applicationInfo.uid)
             statsManager = sm
             sm.start(serviceScope)
@@ -98,6 +114,7 @@ class GlassVpnService : VpnService() {
             isRunning = true
             broadcastState(STATE_CONNECTED)
 
+            // 5. Notification loop
             notificationJob = serviceScope.launch {
                 while (isActive) {
                     val s = sm.stats.value
@@ -109,7 +126,7 @@ class GlassVpnService : VpnService() {
                 }
             }
 
-            Log.i(TAG, "VPN fully connected")
+            Log.i(TAG, "VPN fully up")
 
         } catch (e: Exception) {
             Log.e(TAG, "startVpn exception", e)
@@ -125,8 +142,9 @@ class GlassVpnService : VpnService() {
         notificationJob = null
         statsManager?.stop()
         statsManager = null
-        serviceScope.launch { XrayManager.stop() }
+        Tun2SocksManager.stop()
         cleanupTun()
+        serviceScope.launch { XrayManager.stop() }
         broadcastState(STATE_DISCONNECTED)
         VpnNotification.update(this, false, -1, 0, 0)
         stopForeground(STOP_FOREGROUND_DETACH)
@@ -134,7 +152,7 @@ class GlassVpnService : VpnService() {
     }
 
     private fun cleanupTun() {
-        try { tunInterface?.close() } catch (e: Exception) { Log.e(TAG, "TUN close error", e) }
+        try { tunInterface?.close() } catch (e: Exception) { Log.e(TAG, "TUN close", e) }
         tunInterface = null
     }
 
