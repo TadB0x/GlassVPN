@@ -284,6 +284,63 @@ fun HomeScreen(
                 }
             }
 
+            // ── Exit IP Card (shown when connected) ──────────────────
+            if (uiState.connectionState == ConnectionState.CONNECTED && uiState.exitIp.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                GlassCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(YellowAccent.copy(alpha = 0.12f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Language,
+                                contentDescription = null,
+                                tint = YellowAccent,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = uiState.exitIp,
+                                color = Color.White,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                            )
+                            val location = listOfNotNull(
+                                uiState.exitCity.takeIf { it.isNotEmpty() },
+                                uiState.exitCountry.takeIf { it.isNotEmpty() }
+                            ).joinToString(", ")
+                            Text(
+                                text = if (location.isNotEmpty()) location else "Unknown location",
+                                color = TextTertiary,
+                                fontFamily = OutfitFontFamily,
+                                fontWeight = FontWeight.Normal,
+                                fontSize = 11.sp,
+                            )
+                        }
+                        Text(
+                            text = "EXIT IP",
+                            color = YellowAccent.copy(alpha = 0.7f),
+                            fontFamily = OutfitFontFamily,
+                            fontWeight = FontWeight.Medium,
+                            fontSize = 10.sp,
+                            letterSpacing = 1.sp,
+                        )
+                    }
+                }
+            }
+
             Spacer(Modifier.height(12.dp))
 
             // ── Stats Row: Ping | Download | Upload ──────────────────

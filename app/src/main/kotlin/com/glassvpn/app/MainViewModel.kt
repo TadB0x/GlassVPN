@@ -16,6 +16,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.URL
 
 enum class ConnectionState {
     DISCONNECTED,
@@ -36,6 +39,9 @@ data class UiState(
     val downloadHistory: List<Float> = List(60) { 0f },
     val uploadHistory: List<Float> = List(60) { 0f },
     val vpnPermissionNeeded: Boolean = false,
+    val exitIp: String = "",
+    val exitCountry: String = "",
+    val exitCity: String = "",
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -52,6 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 GlassVpnService.STATE_CONNECTED -> {
                     _uiState.value = _uiState.value.copy(connectionState = ConnectionState.CONNECTED)
                     startStatsPolling()
+                    fetchExitIp()
                 }
                 GlassVpnService.STATE_DISCONNECTED -> {
                     _uiState.value = _uiState.value.copy(
@@ -59,6 +66,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         downloadSpeedBps = 0L,
                         uploadSpeedBps = 0L,
                         pingMs = -1L,
+                        exitIp = "",
+                        exitCountry = "",
+                        exitCity = "",
                     )
                     stopStatsPolling()
                 }
@@ -151,6 +161,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         statsPollingJob = null
         statsManager?.stop()
         statsManager = null
+    }
+
+    private fun fetchExitIp() {
+        viewModelScope.launch(Dispatchers.IO) {
+            // Retry a few times — tunnel may not be fully up yet
+            repeat(5) { attempt ->
+                try {
+                    val json = URL("https://ipinfo.io/json").readText()
+                    val obj = JSONObject(json)
+                    val ip = obj.optString("ip", "")
+                    val country = obj.optString("country", "")
+                    val city = obj.optString("city", "")
+                    if (ip.isNotEmpty()) {
+                        _uiState.value = _uiState.value.copy(
+                            exitIp = ip,
+                            exitCountry = country,
+                            exitCity = city,
+                        )
+                        return@launch
+                    }
+                } catch (_: Exception) {}
+                delay(2000L * (attempt + 1))
+            }
+        }
     }
 
     override fun onCleared() {
