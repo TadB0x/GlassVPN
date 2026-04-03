@@ -87,8 +87,6 @@ dependencies {
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.google.fonts)
 
-    implementation(libs.haze)
-
     implementation(libs.kotlinx.coroutines.android)
 
     debugImplementation(libs.androidx.ui.tooling)

@@ -5,7 +5,7 @@ coreKtx = "1.13.1"
 lifecycleRuntimeKtx = "2.8.6"
 activityCompose = "1.9.3"
 composeBom = "2024.10.01"
-haze = "0.7.3"
+haze = "1.5.3"
 coroutines = "1.8.1"
 
 [libraries]
@@ -21,7 +21,7 @@ androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
 androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
-haze = { group = "dev.chrisbanes.haze", name = "haze-jetpack-compose", version.ref = "haze" }
+haze = { group = "dev.chrisbanes.haze", name = "haze", version.ref = "haze" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 google-fonts = { group = "androidx.compose.ui", name = "ui-text-google-fonts" }
 
